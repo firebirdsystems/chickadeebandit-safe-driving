@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  addDays, canMark, canSetLimit, demoTrips, driversFrom, eventCounts, formatDistance, formatDuration, formatSpeed,
-  groupByDay, hasEvents, isCounted, isDismissed, isMidDriveUnlock, limitFromKph, limitToKph, scoreSummary, secondsOverLimit,
+  addDays, canMark, canSetLimit, demoTrips, driversFrom, recordingNotice, NO_DRIVES_DAYS, eventCounts, formatDistance, formatDuration, formatSpeed,
+  groupByDay, hasEvents, isCounted, isDismissed, isMidDriveUnlock, limitFromKph, limitToKph, scoreSummary, secondsOverLimit, shownEvents, isStoppedUnlock, UNLOCK_MOVING_KPH,
   speedProfile, summarize, tripRoute, tripsInWeek, weekStart, MIN_SCORED_DISTANCE_M,
 } from "../src/logic.js";
 
@@ -61,6 +61,25 @@ describe("eventCounts", () => {
     expect(t.events.map((event) => isMidDriveUnlock(event, t))).toEqual([false, false, true]);
     expect(eventCounts(t)).toMatchObject({ unlocks: 3, unlockedSeconds: 1825, midDriveUnlocks: 1 });
     expect(isMidDriveUnlock({ type: "phone_call", at: "2026-10-01T15:12:00.000Z" }, t)).toBe(false);
+  });
+
+  it("leaves out an unlock made while the car was stopped, and keeps one with no speed reported", () => {
+    const unlock = (minute, speedKph) => ({
+      type: "phone_unlocked", at: `2026-10-01T15:${minute}:00.000Z`, durationS: 20,
+      ...(speedKph === undefined ? {} : { speedKph }),
+    });
+    const t = trip({
+      events: [unlock(20, 0), unlock(12, 7), unlock(14, UNLOCK_MOVING_KPH), unlock(16, 60), unlock(18, undefined)],
+    });
+    expect(t.events.map((event) => isStoppedUnlock(event, t))).toEqual([true, true, false, false, false]);
+    expect(shownEvents(t).map((event) => event.at.slice(14, 16))).toEqual(["14", "16", "18"]);
+    expect(eventCounts(t)).toMatchObject({ unlocks: 3, unlockedSeconds: 60, midDriveUnlocks: 3 });
+    // Stopped unlocks alone are nothing worth a second look.
+    expect(hasEvents(trip({ events: [unlock(20, 0)] }))).toBe(false);
+    // A phone unlocked before pulling away is still "from the start", whatever the speed then.
+    const fromStart = trip({ events: [{ type: "phone_unlocked", at: t.startedAt, durationS: 900, speedKph: 0 }] });
+    expect(shownEvents(fromStart)).toHaveLength(1);
+    expect(eventCounts(fromStart)).toMatchObject({ unlocks: 1, midDriveUnlocks: 0 });
   });
 
   it("does not flag a dismissed trip for a phone that was only unlocked from the start", () => {
@@ -244,17 +263,51 @@ describe("who is shown, and who may do what", () => {
   });
 
   it("lets a member mark their own trip and an adult a non-adult's — and nobody an adult's private one", () => {
-    const mom = MEMBERS[0], dad = MEMBERS[1], teen = MEMBERS[2], kid = MEMBERS[3];
-    expect(canMark(trip(), teen, MEMBERS)).toBe(true);
-    expect(canMark(trip(), mom, MEMBERS)).toBe(true);
-    expect(canMark(trip(), kid, MEMBERS)).toBe(false);
-    const moms = trip({ memberId: "mom", selfOnly: true });
-    expect(canMark(moms, mom, MEMBERS)).toBe(true);
-    expect(canMark(moms, dad, MEMBERS)).toBe(false);
-    // Recorded while the driver was an adult: private for good, whatever their role is now.
-    expect(canMark(trip({ selfOnly: true }), mom, MEMBERS)).toBe(false);
-    expect(canMark(trip(), null, MEMBERS)).toBe(false);
+    // Marking follows reading on the hub, so a trip that arrived is markable —
+    // including for the account holder, who has no member row at all.
+    expect(canMark(trip())).toBe(true);
+    expect(canMark(trip({ memberId: "mom", selfOnly: true }))).toBe(true);
+    expect(canMark(null)).toBe(false);
   });
+
+  it("puts a monitored driver in the picker before their first drive", () => {
+    expect(driversFrom([], MEMBERS, "mom", [], ["teen", "gone"])).toEqual([{ id: "teen", name: "Sam" }]);
+  });
+});
+
+describe("recordingNotice", () => {
+  const NOW = Date.parse("2026-10-20T12:00:00.000Z");
+  const status = (over = {}) => ({ memberId: "teen", recording: true, phoneSeenAt: "2026-10-20T11:00:00.000Z", ...over });
+  const recent = [trip({ endedAt: "2026-10-18T15:30:00.000Z" })];
+
+  it("says nothing for a driver who is not monitored, or one whose drives are arriving", () => {
+    expect(recordingNotice(undefined, recent, NOW)).toBeNull();
+    expect(recordingNotice(status(), recent, NOW)).toBeNull();
+    // A hub with no tracker registry sends no check-in time: the drives speak.
+    expect(recordingNotice(status({ phoneSeenAt: null }), recent, NOW)).toBeNull();
+  });
+
+  it("says the driver's own choice has stopped recording, before anything else", () => {
+    expect(recordingNotice(status({ recording: false, phoneSeenAt: null }), [], NOW)).toEqual({ reason: "not_recording" });
+  });
+
+  it("names a phone that has gone quiet for days, even with recent drives", () => {
+    expect(recordingNotice(status({ phoneSeenAt: "2026-10-16T11:00:00.000Z" }), recent, NOW))
+      .toEqual({ reason: "phone_quiet", since: "2026-10-16T11:00:00.000Z" });
+    // Parked for a weekend is not quiet.
+    expect(recordingNotice(status({ phoneSeenAt: "2026-10-18T11:00:00.000Z" }), recent, NOW)).toBeNull();
+  });
+
+  it("mentions a fortnight with no drives — the driver's own trips only", () => {
+    expect(recordingNotice(status(), [], NOW)).toEqual({ reason: "no_drives", days: NO_DRIVES_DAYS });
+    expect(recordingNotice(status(), [trip({ endedAt: "2026-10-01T15:30:00.000Z" })], NOW))
+      .toEqual({ reason: "no_drives", days: NO_DRIVES_DAYS });
+    expect(recordingNotice(status(), [trip({ memberId: "kid", endedAt: "2026-10-19T15:30:00.000Z" })], NOW))
+      .toEqual({ reason: "no_drives", days: NO_DRIVES_DAYS });
+  });
+});
+
+describe("limits", () => {
 
   it("lets an adult set a limit for a non-adult driver only", () => {
     const mom = MEMBERS[0], teen = MEMBERS[2];

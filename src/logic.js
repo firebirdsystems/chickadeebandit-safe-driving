@@ -45,8 +45,33 @@ export function isMidDriveUnlock(event, trip) {
 }
 
 /**
+ * Slower than this when the phone was unlocked and the car counts as stopped:
+ * above the wander of a GPS speed at a standstill, and above the creep of a
+ * car park. This app's line, not the hub's — the hub only reports the speed.
+ */
+export const UNLOCK_MOVING_KPH = 8;
+
+/**
+ * An unlock during the drive while the car was stopped — at a light, or pulled
+ * up at the destination before the drive had ended. Not counted and not shown:
+ * a report that lists the phone being picked up once the car has parked is one
+ * a driver stops trusting. A trip from a phone that did not report the speed
+ * cannot be told apart, and its unlocks count as before.
+ */
+export function isStoppedUnlock(event, trip) {
+  return isMidDriveUnlock(event, trip) && Number.isFinite(event.speedKph) && event.speedKph < UNLOCK_MOVING_KPH;
+}
+
+/** The trip's events as shown and counted, in the order they happened. */
+export function shownEvents(trip) {
+  return (trip?.events ?? [])
+    .filter((event) => !isStoppedUnlock(event, trip))
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+}
+
+/**
  * What happened on one trip, by kind. `unlocks` and `unlockedSeconds` are every
- * unlocked stretch; `midDriveUnlocks` is how many of them were someone
+ * unlocked stretch that is shown; `midDriveUnlocks` is how many of them were someone
  * unlocking the phone during the drive. Only the last is treated as a problem:
  * a phone unlocked for the whole drive is a phone giving directions.
  */
@@ -55,7 +80,7 @@ export function eventCounts(trip) {
     hardBrakes: 0, hardAccelerations: 0, calls: 0, callSeconds: 0,
     unlocks: 0, unlockedSeconds: 0, midDriveUnlocks: 0,
   };
-  for (const event of trip?.events ?? []) {
+  for (const event of shownEvents(trip)) {
     const seconds = Number.isFinite(event.durationS) ? Math.max(0, event.durationS) : 0;
     if (event.type === "hard_brake") counts.hardBrakes++;
     else if (event.type === "hard_acceleration") counts.hardAccelerations++;
@@ -207,13 +232,15 @@ export function groupByDay(trips, dayOf) {
  * adult's own drives are theirs alone), so this never widens anything — it only
  * names what arrived.
  */
-export function driversFrom(trips, members, meId, limitIds = []) {
+export function driversFrom(trips, members, meId, limitIds = [], monitoredIds = []) {
   // …and every driver the viewer can read a limit for, so a limit can still be
-  // seen and cleared in a month its driver did not drive.
+  // seen and cleared in a month its driver did not drive; and every driver the
+  // hub says is being monitored, so one can be chosen — and given a limit —
+  // before their first drive.
   const known = new Set((members ?? []).map((member) => member.id));
   const ids = [...new Set([
     ...(trips ?? []).map((trip) => trip.memberId),
-    ...[...limitIds].filter((id) => known.has(id)),
+    ...[...limitIds, ...monitoredIds].filter((id) => known.has(id)),
   ])];
   const name = (id) => (members ?? []).find((member) => member.id === id)?.name ?? "Member";
   return ids
@@ -222,17 +249,46 @@ export function driversFrom(trips, members, meId, limitIds = []) {
 }
 
 /**
- * Whether the viewer may mark this trip, mirroring the hub's rule so the
- * buttons shown are the ones that work: your own trips, and — for an adult — a
- * non-adult's. The hub decides for real (in a shared space only a steward
- * supervises); a refusal there is shown as a message, not hidden here.
+ * Whether the viewer may mark this trip: any trip they were handed. On the hub
+ * marking follows reading — a member their own, a supervisor a non-adult's —
+ * so a trip that arrived is one this viewer may mark. Guessing the rule here
+ * from the viewer's role got it wrong for the one viewer with no member row,
+ * the account holder, who reads and marks like any supervising adult. The hub
+ * still decides; a refusal is shown as a message.
  */
-export function canMark(trip, me, members) {
-  if (!trip || !me) return false;
-  if (trip.memberId === me.id) return true;
-  if (trip.selfOnly) return false;
-  const driver = (members ?? []).find((member) => member.id === trip.memberId);
-  return me.role === "adult" && driver?.role !== "adult";
+export function canMark(trip) {
+  return !!trip;
+}
+
+/** A phone silent for this long has stopped reporting, not merely parked. */
+export const PHONE_QUIET_MS = 3 * 86_400_000;
+/** No drive for this long is worth a line: it may be a quiet fortnight, or
+ *  recording may have stopped without anyone being told. */
+export const NO_DRIVES_DAYS = 14;
+
+/**
+ * Why a monitored driver's week may be emptier than their driving, or null.
+ * `status` is the hub's entry for the driver (family.drives.drivers): absent
+ * for a driver who is not monitored, and from a hub that does not send it.
+ *
+ *   not_recording  the driver's own map choice stops drives being recorded
+ *   phone_quiet    their phone has not reported to the hub for days
+ *   no_drives      nothing recorded for a fortnight — said without blame,
+ *                  because not driving is also an explanation
+ */
+export function recordingNotice(status, trips, nowMs) {
+  if (!status) return null;
+  if (!status.recording) return { reason: "not_recording" };
+  const seen = Date.parse(status.phoneSeenAt ?? "");
+  if (!Number.isNaN(seen) && nowMs - seen >= PHONE_QUIET_MS) {
+    return { reason: "phone_quiet", since: status.phoneSeenAt };
+  }
+  const last = Math.max(-Infinity, ...(trips ?? [])
+    .filter((trip) => trip.memberId === status.memberId)
+    .map((trip) => Date.parse(trip.endedAt))
+    .filter((at) => !Number.isNaN(at)));
+  if (nowMs - last >= NO_DRIVES_DAYS * 86_400_000) return { reason: "no_drives", days: NO_DRIVES_DAYS };
+  return null;
 }
 
 /** Whether the viewer is OFFERED the speed limit for this driver: an adult,
@@ -343,7 +399,7 @@ export function demoTrips(nowMs = Date.now()) {
     { ...base, id: "demo-t2", ...at(1, 17, 26), distanceM: 21500, avgSpeedKph: 50, maxSpeedKph: 118, status: "driver",
       start: school, end: home, speedBands: [100, 60, 120, 180, 200, 160, 120, 100, 140, 160, 120, 100],
       // Unlocked ten minutes in — picked up while driving.
-      events: [{ type: "phone_unlocked", at: new Date(Date.parse(at(1, 17, 26).startedAt) + 600_000).toISOString(), durationS: 40 }] },
+      events: [{ type: "phone_unlocked", at: new Date(Date.parse(at(1, 17, 26).startedAt) + 600_000).toISOString(), durationS: 40, speedKph: 52 }] },
     { ...base, id: "demo-t3", ...at(2, 21, 35), distanceM: 30200, avgSpeedKph: 52, maxSpeedKph: 104, nightMinutes: 35, status: "driver",
       start: home, end: place(47.4502, -122.3088, "Airport"), speedBands: [140, 80, 160, 200, 240, 200, 180, 200, 300, 260, 140],
       // Unlocked from the start (directions to the airport), and one call.

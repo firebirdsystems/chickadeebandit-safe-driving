@@ -89,8 +89,8 @@
 <script type="module">
 import { esc, hubAlert, hubToday } from "/hub-sdk.js";
 import {
-  addDays, canMark, canSetLimit, demoTrips, driversFrom, eventCounts, formatDistance, formatDuration, formatSpeed,
-  groupByDay, hasEvents, isCounted, isDismissed, isMidDriveUnlock, limitFromKph, limitToKph, scoreSummary, secondsOverLimit,
+  addDays, canMark, canSetLimit, demoTrips, driversFrom, recordingNotice, eventCounts, formatDistance, formatDuration, formatSpeed,
+  groupByDay, hasEvents, isCounted, isDismissed, isMidDriveUnlock, limitFromKph, limitToKph, scoreSummary, secondsOverLimit, shownEvents,
   speedProfile, summarize, tripRoute, tripsInWeek, weekStart, EVENT_LABEL, STATUS_LABEL,
 } from "./logic.js";
 
@@ -112,6 +112,7 @@ let me = null;
 let trips = [];
 let partial = false;
 let limits = new Map();   // driver member id → km/h
+let monitored = [];       // family.drives.drivers: who is monitored, and whether it is really recording
 let limitsFailed = false; // the limits could not be read: do not show or offer to change them
 let driverId = null;
 let weekOffset = 0;       // 0 = this week, 1 = last week, …
@@ -156,11 +157,12 @@ async function load() {
     ];
     me = members[0];
     trips = demoTrips();
+    monitored = [{ memberId: "demo-3", recording: true, phoneSeenAt: new Date().toISOString() }];
     limits = new Map([["demo-3", 105]]);
     return;
   }
   const [contextRes, limitRows] = await Promise.all([
-    fetch(`${CONTEXT}?keys=family.members,family.drives&days=${HISTORY_DAYS}`),
+    fetch(`${CONTEXT}?keys=family.members,family.drives,family.drives.drivers&days=${HISTORY_DAYS}`),
     // A driver reads their own row; an adult reads them all (row policy). A
     // failure here costs the limits, not the drives.
     db("SELECT member_id, limit_kph FROM app_safe_driving__driver_limits").catch(() => null),
@@ -169,6 +171,8 @@ async function load() {
   const ctx = await contextRes.json();
   members = ctx["family.members"] ?? [];
   trips = ctx["family.drives"] ?? [];
+  // Absent from a hub that predates it: then nothing is said about recording.
+  monitored = ctx["family.drives.drivers"] ?? [];
   partial = (ctx.$partial ?? []).includes("family.drives");
   me = ME ?? null;
   limitsFailed = limitRows === null;
@@ -182,7 +186,7 @@ async function refresh() {
   } catch (e) {
     error = e.message;
   }
-  const drivers = driversFrom(trips, members, me?.id, limits.keys());
+  const drivers = driversFrom(trips, members, me?.id, limits.keys(), monitored.map((d) => d.memberId));
   if (!drivers.some((d) => d.id === driverId)) driverId = drivers[0]?.id ?? null;
   render();
 }
@@ -285,7 +289,7 @@ function tripChips(trip, limitKph) {
 }
 
 function renderTrip(trip, limitKph) {
-  const askable = trip.status === "unconfirmed" && canMark(trip, me, members);
+  const askable = trip.status === "unconfirmed" && canMark(trip);
   const mine = trip.memberId === me?.id;
   return `
     <div class="card">
@@ -366,10 +370,26 @@ function renderLimit() {
     </form>`;
 }
 
+/** Says so when a monitored driver's drives are not, or may not be, arriving. */
+function renderRecordingNotice() {
+  const notice = recordingNotice(monitored.find((d) => d.memberId === driverId), trips, Date.now());
+  if (!notice) return "";
+  const mine = driverId === me?.id;
+  const who = mine ? "your" : `${esc(memberName(driverId))}'s`;
+  const phone = mine ? "your phone" : "their phone";
+  if (notice.reason === "not_recording") {
+    return `<div class="note">Drives are not being recorded: ${who} location sharing is set to places only or off. ${mine ? "Change it" : "They can change it"} in the hub under Location → Share.</div>`;
+  }
+  if (notice.reason === "phone_quiet") {
+    return `<div class="note">${mine ? "Your" : `${esc(memberName(driverId))}'s`} phone last checked in on ${esc(dayLabel(hubToday(new Date(notice.since))))}. Drives are not recorded until Chickadee Locate is opened on ${phone}.</div>`;
+  }
+  return `<div class="note">No drives recorded in the last ${notice.days} days. If ${mine ? "you have" : `${esc(memberName(driverId))} has`} been driving, open Chickadee Locate on ${phone}.</div>`;
+}
+
 function render() {
   const root = document.getElementById("root");
   root.className = "";
-  const drivers = driversFrom(trips, members, me?.id, limits.keys());
+  const drivers = driversFrom(trips, members, me?.id, limits.keys(), monitored.map((d) => d.memberId));
   const own = trips.filter((trip) => trip.memberId === driverId);
   const limitKph = limits.get(driverId) ?? null;
   const monday = addDays(weekStart(hubToday()), -7 * weekOffset);
@@ -396,8 +416,9 @@ function render() {
     ${!driverId ? `
       <div class="card empty">
         <p>No drives yet.</p>
-        <p class="tiny" style="margin-top:8px">An adult turns on drive monitoring for a driver on the hub's Location page, and the driver's phone needs Chickadee Locate. Drives appear here after each one ends.</p>
+        <p class="tiny" style="margin-top:8px">An adult turns on drive monitoring for a driver in the hub under Location → Settings → Drive monitoring (Location → Share for an adult who isn't an admin), and the driver's phone needs Chickadee Locate. Drives appear here after each one ends.</p>
       </div>` : `
+      ${renderRecordingNotice()}
       ${renderSummary(summarize(week, limitKph), monday)}
       <div style="margin-top:10px">${renderLimit()}</div>
       ${counted.length ? groupByDay(counted, dayOf).map((group) => `
@@ -442,8 +463,8 @@ async function openTrip(tripId) {
   const limitKph = limits.get(trip.memberId) ?? null;
   const bars = speedProfile(trip.speedBands, limitKph, unit);
   const widest = Math.max(...bars.map((bar) => bar.share), 0.0001);
-  const markable = canMark(trip, me, members);
-  const events = [...(trip.events ?? [])].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const markable = canMark(trip);
+  const events = shownEvents(trip);
 
   openModal(`
     <div class="row">
@@ -474,8 +495,8 @@ async function openTrip(tripId) {
       <div class="event">
         <span>${esc(event.type === "phone_unlocked" && !isMidDriveUnlock(event, trip) ? "Phone unlocked from the start" : EVENT_LABEL[event.type] ?? event.type)}${event.durationS ? ` · ${esc(formatDuration(event.durationS))}` : ""}</span>
         <span class="muted">${esc(clock(event.at))}</span>
-      </div>`).join("") : `<p class="muted tiny">No hard braking or hard acceleration, and the phone was not unlocked or on a call.</p>`}
-    <p class="muted tiny" style="margin-top:8px">"Phone unlocked" means the screen was unlocked, not what it was used for. A phone already unlocked when the drive began — in a mount, showing directions — costs nothing; unlocking it while driving does.</p>
+      </div>`).join("") : `<p class="muted tiny">No hard braking or hard acceleration, and the phone was not on a call or unlocked while moving.</p>`}
+    <p class="muted tiny" style="margin-top:8px">"Phone unlocked" means the screen was unlocked, not what it was used for. A phone already unlocked when the drive began — in a mount, showing directions — costs nothing, and an unlock while the car is stopped is not listed; unlocking it while moving is.</p>
     <h2>${esc(STATUS_LABEL[trip.status] ?? trip.status)}${trip.statusReason ? ` — ${esc(trip.statusReason)}` : ""}</h2>
     ${trip.statusBy ? `<p class="muted tiny">Marked by ${esc(memberName(trip.statusBy))}.</p>` : ""}
     ${markable ? `
