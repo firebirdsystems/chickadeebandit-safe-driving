@@ -1,0 +1,61 @@
+{
+  "$schema": "https://chickadeebandit.com/manifest-schema.json",
+  "id": "safe-driving",
+  "contexts": [
+    "household",
+    "shared_space"
+  ],
+  "name": "Safe Driving",
+  "version": "1.0.0",
+  "description": "Drive reports for new drivers. The Chickadee Locate companion app on the driver's phone records each drive — route, distance, speed, hard braking, and when the phone was unlocked or on a call — and this app shows the week at a glance, each trip on a map, and lets the driver mark a ride that wasn't theirs. Off until an adult turns drive monitoring on.",
+  "entrypoint": "index.html",
+  "runtime": "static",
+  "category": "family",
+  "tags": [
+    "family",
+    "driving",
+    "teen",
+    "safety",
+    "location"
+  ],
+  "icon": "🚗",
+  "companion_app": {
+    "name": "Chickadee Locate",
+    "tagline": "Records drives from the driver's phone",
+    "android_url": "https://play.google.com/store/apps/details?id=net.firebirdsystems.chickadeebandit.locate",
+    "ios_url": "https://apps.apple.com/app/chickadee-locate/id6794442354"
+  },
+  "storage": "db",
+  "data_access": {
+    "reads": [
+      "family.members",
+      "family.drives"
+    ],
+    "writes": [
+      "family.drives"
+    ]
+  },
+  "permissions": {
+    "default_audience": "everyone",
+    "requires_approval": false
+  },
+  "member_references": {
+    "driver_limits": {
+      "column": "member_id",
+      "on_removed": "delete"
+    }
+  },
+  "row_policies": {
+    "driver_limits": {
+      "kind": "adult_writable",
+      "member_read_column": "member_id"
+    }
+  },
+  "nav": {
+    "label": "Safe Driving"
+  },
+  "resource_limits": {
+    "max_db_bytes": 5242880
+  },
+  "kiosk": "never"
+}

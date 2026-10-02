@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Safe Driving</title>
+  <link rel="stylesheet" href="./vendor/leaflet/leaflet.css" />
+  <script src="./vendor/leaflet/leaflet.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: var(--hub-bg, #f9fafb);
+      --surface: var(--hub-surface, #ffffff);
+      --border: var(--hub-border, #e5e7eb);
+      --border-mid: var(--hub-border, #d1d5db);
+      --text: var(--hub-text, #000000);
+      --muted: var(--hub-text-muted, #6b7280);
+      --accent: var(--hub-primary, #111827);
+      --accent-hover: var(--hub-primary-hover, #374151);
+      --accent-fg: var(--hub-primary-fg, #ffffff);
+      --radius: var(--hub-radius, 8px);
+      --red: var(--hub-tint-danger-fg, #b91c1c);
+      --red-soft: var(--hub-tint-danger, #fee2e2);
+      --amber: var(--hub-tint-warning-fg, #b45309);
+      --amber-soft: var(--hub-tint-warning, #fef3c7);
+      --shadow: 0 1px 3px rgba(15, 23, 42, .07);
+    }
+    body {
+      min-height: 100vh; background: var(--bg); color: var(--text);
+      font-family: var(--hub-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+      font-size: var(--hub-font-size, 15px); line-height: 1.5;
+    }
+    .app { max-width: 680px; margin: 0 auto; padding: 16px; }
+    .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    h1 { font-size: 1.35rem; line-height: 1.2; }
+    h2 { font-size: .95rem; margin: 18px 0 8px; }
+    .muted { color: var(--muted); }
+    .tiny { font-size: .78rem; }
+    .stack { display: grid; gap: 10px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      border: 1px solid transparent; border-radius: 8px; padding: 8px 12px;
+      font: inherit; font-size: .86rem; font-weight: 700; cursor: pointer;
+      min-height: 38px; background: var(--accent); color: var(--accent-fg);
+    }
+    .btn:hover { background: var(--accent-hover); }
+    .btn:disabled { opacity: .48; cursor: default; }
+    .btn-sm { min-height: 30px; padding: 4px 10px; font-size: .78rem; }
+    .btn-ghost { background: transparent; color: var(--text); border-color: var(--border-mid); }
+    .btn-ghost:hover { background: var(--bg); }
+    select, input {
+      border: 1.5px solid var(--border-mid); border-radius: 8px; padding: 7px 10px;
+      font: inherit; background: var(--surface); color: var(--text);
+    }
+    .empty, .loading { color: var(--muted); text-align: center; padding: 28px 16px; }
+    .error { background: var(--red-soft); color: var(--red); padding: 9px 12px; border-radius: 8px; margin-bottom: 10px; font-size: .86rem; }
+    .note { background: var(--amber-soft); color: var(--amber); padding: 9px 12px; border-radius: 8px; margin-bottom: 10px; font-size: .84rem; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin-top: 12px; }
+    .stat b { display: block; font-size: 1.15rem; line-height: 1.2; }
+    .stat span { color: var(--muted); font-size: .76rem; }
+    .score { font-size: 2rem; font-weight: 800; line-height: 1; }
+    .trip { cursor: pointer; text-align: left; width: 100%; font: inherit; color: inherit; }
+    .trip:hover { border-color: var(--border-mid); }
+    .trip-title { font-weight: 700; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .chip { border-radius: 999px; padding: 1px 9px; font-size: .74rem; font-weight: 700; background: var(--bg); border: 1px solid var(--border); }
+    .chip-warn { background: var(--amber-soft); border-color: transparent; color: var(--amber); }
+    .chip-bad { background: var(--red-soft); border-color: transparent; color: var(--red); }
+    .ask { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+    details > summary { cursor: pointer; font-weight: 700; font-size: .9rem; padding: 6px 0; }
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, .5); display: flex; align-items: flex-start; justify-content: center; padding: 16px; overflow-y: auto; z-index: 1000; }
+    .modal { background: var(--surface); border-radius: 12px; width: 100%; max-width: 620px; padding: 16px; margin: auto; }
+    #map { height: 280px; border-radius: 8px; margin: 12px 0; background: var(--bg); }
+    .bars { display: grid; gap: 3px; margin-top: 8px; }
+    .bar { display: grid; grid-template-columns: 74px 1fr 60px; gap: 8px; align-items: center; font-size: .76rem; }
+    .bar i { display: block; height: 10px; border-radius: 3px; background: var(--accent); min-width: 2px; }
+    .bar.over i { background: var(--red); }
+    .event { display: flex; justify-content: space-between; gap: 10px; font-size: .84rem; padding: 4px 0; border-bottom: 1px solid var(--border); }
+  </style>
+  <base href="/run/safe-driving/">
+</head>
+<body>
+<div class="app">
+  <div id="root" class="loading">Loading…</div>
+</div>
+
+<script type="module">
+import { esc, hubAlert, hubToday } from "/hub-sdk.js";
+import {
+  addDays, canMark, canSetLimit, demoTrips, driversFrom, eventCounts, formatDistance, formatDuration, formatSpeed,
+  groupByDay, hasEvents, isCounted, isDismissed, isMidDriveUnlock, limitFromKph, limitToKph, scoreSummary, secondsOverLimit,
+  speedProfile, summarize, tripRoute, tripsInWeek, weekStart, EVENT_LABEL, STATUS_LABEL,
+} from "./logic.js";
+
+// --- Hub runtime globals (empty in demo mode) --------------------------------
+const CONTEXT = window.__CONTEXT_URL ?? "";
+const DB = window.__DB_URL ?? "";
+const APP_ID = window.__APP_ID ?? "safe-driving";
+const ME = window.__CURRENT_MEMBER ?? null;
+// App-origin runtime path: the hub's own /api/drives/trip-status does not
+// exist on this origin. Served because the manifest declares family.drives in
+// data_access.writes.
+const TRIP_STATUS = `/run/${APP_ID}/api/drives/trip-status`;
+// Five weeks back: this week and four to page through.
+const HISTORY_DAYS = 35;
+
+// --- App state ---------------------------------------------------------------
+let members = [];
+let me = null;
+let trips = [];
+let partial = false;
+let limits = new Map();   // driver member id → km/h
+let limitsFailed = false; // the limits could not be read: do not show or offer to change them
+let driverId = null;
+let weekOffset = 0;       // 0 = this week, 1 = last week, …
+let unit = "km";
+let error = "";
+let modalEl = null;
+let map = null;
+
+try {
+  const stored = localStorage.getItem("safe-driving-unit");
+  unit = stored === "mi" || stored === "km" ? stored : (/^en-(US|GB)/.test(navigator.language) ? "mi" : "km");
+} catch { /* storage blocked: the default unit stands */ }
+
+/** The household-local day a trip started on. */
+const dayOf = (trip) => hubToday(new Date(trip.startedAt));
+const memberName = (id) => (id === me?.id ? "You" : members.find((m) => m.id === id)?.name ?? "Member");
+const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+function dayLabel(day) {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+}
+
+async function db(sql, params = []) {
+  if (!DB) return { rows: [] };
+  const res = await fetch(DB, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sql, params }),
+  });
+  const json = await res.json();
+  if (json.error) throw new Error(json.error);
+  return json;
+}
+
+async function load() {
+  if (!CONTEXT) {
+    // Demo-mode fallback so the app renders with no hub attached.
+    members = [
+      { id: "demo-1", name: "Alex", role: "adult" },
+      { id: "demo-3", name: "Casey", role: "child" },
+    ];
+    me = members[0];
+    trips = demoTrips();
+    limits = new Map([["demo-3", 105]]);
+    return;
+  }
+  const [contextRes, limitRows] = await Promise.all([
+    fetch(`${CONTEXT}?keys=family.members,family.drives&days=${HISTORY_DAYS}`),
+    // A driver reads their own row; an adult reads them all (row policy). A
+    // failure here costs the limits, not the drives.
+    db("SELECT member_id, limit_kph FROM app_safe_driving__driver_limits").catch(() => null),
+  ]);
+  if (!contextRes.ok) throw new Error("Could not load drives.");
+  const ctx = await contextRes.json();
+  members = ctx["family.members"] ?? [];
+  trips = ctx["family.drives"] ?? [];
+  partial = (ctx.$partial ?? []).includes("family.drives");
+  me = ME ?? null;
+  limitsFailed = limitRows === null;
+  limits = new Map((limitRows?.rows ?? []).map((row) => [row.member_id, Number(row.limit_kph)]));
+}
+
+async function refresh() {
+  error = "";
+  try {
+    await load();
+  } catch (e) {
+    error = e.message;
+  }
+  const drivers = driversFrom(trips, members, me?.id, limits.keys());
+  if (!drivers.some((d) => d.id === driverId)) driverId = drivers[0]?.id ?? null;
+  render();
+}
+
+// --- Marking a trip ----------------------------------------------------------
+
+/** Replaces a trip's label fields with what was stored. The hub leaves out a
+ *  reason or an actor it does not have, so the old ones are dropped first —
+ *  merging would keep "Carpool" on a trip just marked "Driving". */
+function applyStatus(trip, stored) {
+  for (const key of ["statusReason", "statusBy", "statusAt"]) delete trip[key];
+  Object.assign(trip, stored);
+}
+
+/** True when the trip was marked. */
+async function markTrip(tripId, status, reason) {
+  const trip = trips.find((t) => t.id === tripId);
+  if (!trip) return false;
+  if (!CONTEXT) {
+    // Demo mode: nothing to write to.
+    applyStatus(trip, { status, ...(reason ? { statusReason: reason } : {}), ...(me ? { statusBy: me.id } : {}) });
+    closeTripModal(tripId);
+    render();
+    return true;
+  }
+  try {
+    const res = await fetch(TRIP_STATUS, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tripId, status, ...(reason ? { reason } : {}) }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // The hub decides who may mark a trip; say what it said.
+      await hubAlert(res.status === 404 ? "This trip is not yours to mark." : (json.error ?? "Could not mark this trip."));
+      return false;
+    }
+    // Patch local state with what the hub stored — no reload of the list.
+    applyStatus(trip, json.trip ?? { status });
+    closeTripModal(tripId);
+    render();
+    return true;
+  } catch {
+    await hubAlert("Could not reach the hub. Try again.");
+    return false;
+  }
+}
+
+// --- A driver's speed limit --------------------------------------------------
+
+async function saveLimit(form) {
+  if (!canSetLimit(driverId, me, members) || limitsFailed) return;
+  const raw = form.limit.value.trim();
+  const button = form.querySelector("button[type=submit]");
+  if (button) button.disabled = true;
+  try {
+    if (raw === "") {
+      await db("DELETE FROM app_safe_driving__driver_limits WHERE member_id = ?", [driverId]);
+      limits.delete(driverId);
+    } else {
+      const kph = limitToKph(raw, unit);
+      if (kph === null) {
+        await hubAlert("Enter a speed limit, or leave it empty for none.");
+        if (button) button.disabled = false;
+        return;
+      }
+      // One row per driver, replaced in ONE statement: a delete followed by an
+      // insert that then failed would leave the driver with no limit at all.
+      await db(
+        "INSERT INTO app_safe_driving__driver_limits (id, member_id, limit_kph) VALUES (?, ?, ?) "
+        + "ON CONFLICT(member_id) DO UPDATE SET limit_kph = excluded.limit_kph",
+        [driverId, driverId, kph],
+      );
+      limits.set(driverId, kph);
+    }
+    error = "";
+  } catch (e) {
+    error = e.message;
+  }
+  render();
+}
+
+// --- Rendering ---------------------------------------------------------------
+
+function tripChips(trip, limitKph) {
+  const c = eventCounts(trip);
+  const chips = [];
+  const hard = c.hardBrakes + c.hardAccelerations;
+  if (hard) chips.push(`<span class="chip chip-bad">${hard} hard ${hard === 1 ? "event" : "events"}</span>`);
+  // Unlocking the phone mid-drive is the thing to notice. A phone that was
+  // simply unlocked throughout is a phone giving directions: said, not flagged.
+  if (c.midDriveUnlocks) chips.push(`<span class="chip chip-warn">Phone unlocked ${c.midDriveUnlocks} ${c.midDriveUnlocks === 1 ? "time" : "times"} while driving</span>`);
+  else if (c.unlocks) chips.push(`<span class="chip">Phone unlocked from the start</span>`);
+  if (c.calls) chips.push(`<span class="chip chip-warn">On a call ${esc(formatDuration(c.callSeconds))}</span>`);
+  const over = limitKph ? secondsOverLimit(trip.speedBands, limitKph) : 0;
+  if (over) chips.push(`<span class="chip chip-bad">${esc(formatDuration(over))} over limit</span>`);
+  if (trip.nightMinutes) chips.push(`<span class="chip">${Number(trip.nightMinutes) || 0} min at night</span>`);
+  chips.push(`<span class="chip">Top ${esc(formatSpeed(trip.maxSpeedKph, unit))}</span>`);
+  return chips.join("");
+}
+
+function renderTrip(trip, limitKph) {
+  const askable = trip.status === "unconfirmed" && canMark(trip, me, members);
+  const mine = trip.memberId === me?.id;
+  return `
+    <div class="card">
+      <button class="trip" data-open="${esc(trip.id)}" style="background:none;border:0">
+        <div class="row">
+          <span class="trip-title">${esc(tripRoute(trip))}</span>
+          <span class="muted tiny">${esc(clock(trip.startedAt))} – ${esc(clock(trip.endedAt))}</span>
+        </div>
+        <div class="muted tiny">${Number(trip.minutes) || 0} min · ${esc(formatDistance(trip.distanceM, unit))}${
+          isDismissed(trip) ? ` · ${esc(STATUS_LABEL[trip.status])}${trip.statusReason ? ` — ${esc(trip.statusReason)}` : ""}` : ""}</div>
+        <div class="chips">${tripChips(trip, limitKph)}</div>
+      </button>
+      ${askable ? `
+        <div class="ask row">
+          <span class="tiny">${mine ? "Were you driving?" : `Was ${esc(memberName(trip.memberId))} driving?`}</span>
+          <span>
+            <button class="btn btn-sm" data-mark="${esc(trip.id)}" data-status="driver">Yes</button>
+            <button class="btn btn-sm btn-ghost" data-mark="${esc(trip.id)}" data-status="passenger">No, passenger</button>
+          </span>
+        </div>` : ""}
+    </div>`;
+}
+
+function renderSummary(summary, monday) {
+  const result = scoreSummary(summary);
+  const hard = summary.hardBrakes + summary.hardAccelerations;
+  const lost = result ? [
+    result.parts.hardEvents ? `${result.parts.hardEvents} for hard braking and acceleration` : "",
+    result.parts.overLimit ? `${result.parts.overLimit} for time over the limit` : "",
+    result.parts.phoneUnlocks ? `${result.parts.phoneUnlocks} for unlocking the phone while driving` : "",
+  ].filter(Boolean) : [];
+  return `
+    <div class="card">
+      <div class="row">
+        <div>
+          <div class="muted tiny">Week of ${esc(dayLabel(monday))}</div>
+          ${result
+            ? `<div class="score">${result.score}<span class="muted tiny"> / 100</span></div>`
+            : `<div class="muted">${summary.trips ? "Not enough driving this week to score." : "No drives this week."}</div>`}
+        </div>
+        <div>
+          <button class="btn btn-sm btn-ghost" data-week="1" ${weekOffset >= 4 ? "disabled" : ""}>← Earlier</button>
+          <button class="btn btn-sm btn-ghost" data-week="-1" ${weekOffset === 0 ? "disabled" : ""}>Later →</button>
+        </div>
+      </div>
+      ${lost.length ? `<p class="muted tiny" style="margin-top:6px">Points lost: ${esc(lost.join("; "))}.</p>` : ""}
+      <div class="stats">
+        <div class="stat"><b>${summary.trips}</b><span>${summary.trips === 1 ? "drive" : "drives"}</span></div>
+        <div class="stat"><b>${esc(formatDistance(summary.distanceM, unit))}</b><span>driven</span></div>
+        <div class="stat"><b>${esc(formatDuration(summary.minutes * 60))}</b><span>behind the wheel</span></div>
+        <div class="stat"><b>${summary.nightMinutes} min</b><span>after sunset</span></div>
+        <div class="stat"><b>${hard}</b><span>hard braking or acceleration</span></div>
+        <div class="stat"><b>${summary.midDriveUnlocks}</b><span>${summary.midDriveUnlocks === 1 ? "time" : "times"} the phone was unlocked while driving</span></div>
+        <div class="stat"><b>${summary.calls}</b><span>${summary.calls === 1 ? "call" : "calls"}${summary.calls ? ` (${esc(formatDuration(summary.callSeconds))})` : ""}</span></div>
+        ${summary.limitKph ? `<div class="stat"><b>${esc(formatDuration(summary.overLimitSeconds))}</b><span>over ${esc(formatSpeed(summary.limitKph, unit))}</span></div>` : ""}
+      </div>
+      ${summary.unconfirmed ? `<p class="tiny" style="margin-top:10px">${summary.unconfirmed} ${summary.unconfirmed === 1 ? "drive is" : "drives are"} not marked yet. Unmarked drives count.</p>` : ""}
+    </div>`;
+}
+
+function renderLimit() {
+  // Not "no limit": unknown. Showing an empty field here would invite a save
+  // that deletes the limit that could not be read.
+  if (limitsFailed) return `<p class="note">The speed limit could not be loaded, so time over the limit is not shown. Reload to try again.</p>`;
+  if (!canSetLimit(driverId, me, members)) {
+    const kph = limits.get(driverId);
+    return kph ? `<p class="muted tiny">Speed limit set for ${driverId === me?.id ? "you" : esc(memberName(driverId))}: ${esc(formatSpeed(kph, unit))}.</p>` : "";
+  }
+  const kph = limits.get(driverId);
+  return `
+    <form class="card row" id="limit-form">
+      <label for="limit" class="tiny">Speed limit for ${esc(memberName(driverId))} (${unit === "mi" ? "mph" : "km/h"})</label>
+      <span>
+        <input id="limit" name="limit" inputmode="numeric" size="5" placeholder="None" value="${kph ? limitFromKph(kph, unit) : ""}" />
+        <button class="btn btn-sm" type="submit">Save</button>
+      </span>
+      <p class="muted tiny" style="flex-basis:100%">Applied when a drive is read, so changing it re-reads past drives too. Time is counted only where the speed was clearly over it.</p>
+    </form>`;
+}
+
+function render() {
+  const root = document.getElementById("root");
+  root.className = "";
+  const drivers = driversFrom(trips, members, me?.id, limits.keys());
+  const own = trips.filter((trip) => trip.memberId === driverId);
+  const limitKph = limits.get(driverId) ?? null;
+  const monday = addDays(weekStart(hubToday()), -7 * weekOffset);
+  const week = tripsInWeek(own, monday, dayOf);
+  const counted = week.filter(isCounted);
+  const dismissed = week.filter(isDismissed);
+
+  root.innerHTML = `
+    <div class="topbar">
+      <div>
+        <h1>Safe Driving</h1>
+        <p class="muted tiny">Drives recorded by Chickadee Locate on the driver's phone.</p>
+      </div>
+      <div class="row">
+        ${drivers.length > 1 ? `
+          <select id="driver" aria-label="Driver">
+            ${drivers.map((d) => `<option value="${esc(d.id)}" ${d.id === driverId ? "selected" : ""}>${esc(d.name)}</option>`).join("")}
+          </select>` : ""}
+        <button class="btn btn-sm btn-ghost" data-unit>${unit === "mi" ? "Miles" : "Kilometres"}</button>
+      </div>
+    </div>
+    ${error ? `<div class="error">${esc(error)}</div>` : ""}
+    ${partial ? `<div class="note">There are more drives than can be shown at once. Totals for older weeks may be incomplete.</div>` : ""}
+    ${!driverId ? `
+      <div class="card empty">
+        <p>No drives yet.</p>
+        <p class="tiny" style="margin-top:8px">An adult turns on drive monitoring for a driver on the hub's Location page, and the driver's phone needs Chickadee Locate. Drives appear here after each one ends.</p>
+      </div>` : `
+      ${renderSummary(summarize(week, limitKph), monday)}
+      <div style="margin-top:10px">${renderLimit()}</div>
+      ${counted.length ? groupByDay(counted, dayOf).map((group) => `
+        <h2>${esc(dayLabel(group.day))}</h2>
+        <section class="stack">${group.trips.map((trip) => renderTrip(trip, limitKph)).join("")}</section>`).join("") : ""}
+      ${dismissed.length ? `
+        <details style="margin-top:18px">
+          <summary>Not driving (${dismissed.length})${dismissed.some(hasEvents) ? " ⚑" : ""}</summary>
+          <p class="muted tiny" style="margin-bottom:8px">Marked as a passenger ride or not a drive. These are left out of the week. ⚑ means at least one had hard braking or hard acceleration, a call, or the phone unlocked while driving.</p>
+          <section class="stack">${dismissed.map((trip) => renderTrip(trip, limitKph)).join("")}</section>
+        </details>` : ""}
+    `}
+  `;
+}
+
+// --- Trip detail -------------------------------------------------------------
+
+function openModal(html) {
+  closeModal();
+  modalEl = document.createElement("div");
+  modalEl.className = "modal-backdrop";
+  modalEl.innerHTML = `<div class="modal">${html}</div>`;
+  modalEl.addEventListener("click", (e) => { if (e.target === modalEl) closeModal(); });
+  document.body.appendChild(modalEl);
+}
+
+/** Closes the trip window only if it is still showing THAT trip: a mark that
+ *  comes back late must not shut a different trip the viewer has opened since. */
+function closeTripModal(tripId) {
+  if (modalEl?.dataset.trip === tripId) closeModal();
+}
+
+function closeModal() {
+  if (map) { try { map.remove(); } catch { /* container already gone */ } map = null; }
+  modalEl?.remove();
+  modalEl = null;
+}
+
+async function openTrip(tripId) {
+  const trip = trips.find((t) => t.id === tripId);
+  if (!trip) return;
+  const limitKph = limits.get(trip.memberId) ?? null;
+  const bars = speedProfile(trip.speedBands, limitKph, unit);
+  const widest = Math.max(...bars.map((bar) => bar.share), 0.0001);
+  const markable = canMark(trip, me, members);
+  const events = [...(trip.events ?? [])].sort((a, b) => String(a.at).localeCompare(String(b.at)));
+
+  openModal(`
+    <div class="row">
+      <div>
+        <div class="trip-title">${esc(tripRoute(trip))}</div>
+        <div class="muted tiny">${esc(memberName(trip.memberId))} · ${esc(dayLabel(dayOf(trip)))} · ${esc(clock(trip.startedAt))} – ${esc(clock(trip.endedAt))}</div>
+      </div>
+      <button class="btn btn-sm btn-ghost" data-close>Close</button>
+    </div>
+    <div id="map"><p class="empty tiny">${trip.hasRoute ? "Loading route…" : "The route is kept for 30 days and is no longer available."}</p></div>
+    <div class="stats">
+      <div class="stat"><b>${Number(trip.minutes) || 0} min</b><span>${trip.nightMinutes ? `${Number(trip.nightMinutes) || 0} after sunset` : "duration"}</span></div>
+      <div class="stat"><b>${esc(formatDistance(trip.distanceM, unit))}</b><span>distance</span></div>
+      <div class="stat"><b>${esc(formatSpeed(trip.avgSpeedKph, unit))}</b><span>average</span></div>
+      <div class="stat"><b>${esc(formatSpeed(trip.maxSpeedKph, unit))}</b><span>top speed</span></div>
+    </div>
+    ${bars.length ? `
+      <h2>Time at each speed (${unit === "mi" ? "mph" : "km/h"})</h2>
+      <div class="bars">${bars.map((bar) => `
+        <div class="bar ${bar.over ? "over" : ""}">
+          <span>${esc(bar.label)}</span>
+          <i style="width:${Math.max(1, Math.round((bar.share / widest) * 100))}%"></i>
+          <span class="muted">${esc(formatDuration(bar.seconds))}</span>
+        </div>`).join("")}</div>
+      ${limitKph ? `<p class="muted tiny" style="margin-top:6px">Red is clearly over the ${esc(formatSpeed(limitKph, unit))} limit.</p>` : ""}` : ""}
+    <h2>What happened</h2>
+    ${events.length ? events.map((event) => `
+      <div class="event">
+        <span>${esc(event.type === "phone_unlocked" && !isMidDriveUnlock(event, trip) ? "Phone unlocked from the start" : EVENT_LABEL[event.type] ?? event.type)}${event.durationS ? ` · ${esc(formatDuration(event.durationS))}` : ""}</span>
+        <span class="muted">${esc(clock(event.at))}</span>
+      </div>`).join("") : `<p class="muted tiny">No hard braking or hard acceleration, and the phone was not unlocked or on a call.</p>`}
+    <p class="muted tiny" style="margin-top:8px">"Phone unlocked" means the screen was unlocked, not what it was used for. A phone already unlocked when the drive began — in a mount, showing directions — costs nothing; unlocking it while driving does.</p>
+    <h2>${esc(STATUS_LABEL[trip.status] ?? trip.status)}${trip.statusReason ? ` — ${esc(trip.statusReason)}` : ""}</h2>
+    ${trip.statusBy ? `<p class="muted tiny">Marked by ${esc(memberName(trip.statusBy))}.</p>` : ""}
+    ${markable ? `
+      <form id="mark-form" class="stack" style="margin-top:8px">
+        <input id="mark-reason" maxlength="200" placeholder="Reason (optional), e.g. Jordan drove" value="${esc(trip.statusReason ?? "")}" />
+        <div class="row" style="justify-content:flex-start">
+          ${[["driver", "Driving"], ["passenger", "Passenger"], ["ignored", "Not a drive"]].map(([value, label]) => `
+            <button type="button" class="btn btn-sm ${trip.status === value ? "" : "btn-ghost"}" data-mark="${esc(trip.id)}" data-status="${value}">${label}</button>`).join("")}
+        </div>
+        <p class="muted tiny">Marking changes the label only. The route and everything recorded stay as they are, and a supervising adult still sees the trip.</p>
+      </form>` : ""}
+  `);
+
+  const opened = modalEl;
+  opened.dataset.trip = trip.id;
+  if (!trip.hasRoute || !CONTEXT) {
+    if (!CONTEXT) document.getElementById("map").innerHTML = `<p class="empty tiny">Routes are shown when the app runs in the hub.</p>`;
+    return;
+  }
+  try {
+    const key = `family.drives.trip:${trip.id}`;
+    const res = await fetch(`${CONTEXT}?keys=${encodeURIComponent(key)}`);
+    const full = (await res.json())[key];
+    // The viewer may have closed this trip, or opened another, meanwhile.
+    if (modalEl !== opened) return;
+    const el = modalEl.querySelector("#map");
+    if (!el) return;
+    if (!full?.polyline?.length || typeof L === "undefined") {
+      el.innerHTML = `<p class="empty tiny">The route is no longer available.</p>`;
+      return;
+    }
+    el.innerHTML = "";
+    map = L.map(el, { zoomControl: true, attributionControl: false });
+    // Tiles come from the hub's proxy, root-relative so the same URL resolves
+    // on the hub origin and on this app's own origin.
+    L.tileLayer("/api/tiles/{z}/{x}/{y}", { maxZoom: 19 }).addTo(map);
+    const line = L.polyline(full.polyline.map(([lat, lng]) => [lat, lng]), { color: "#2563eb", weight: 4 }).addTo(map);
+    map.fitBounds(line.getBounds(), { padding: [20, 20] });
+    for (const event of full.events ?? []) {
+      if (!Number.isFinite(event.lat) || !Number.isFinite(event.lng)) continue;
+      const harsh = event.type === "hard_brake" || event.type === "hard_acceleration";
+      L.circleMarker([event.lat, event.lng], { radius: 6, color: harsh ? "#b91c1c" : "#b45309", fillOpacity: 0.9 })
+        // Leaflet takes a tooltip as HTML.
+        .bindTooltip(esc(`${EVENT_LABEL[event.type] ?? event.type} · ${clock(event.at)}`))
+        .addTo(map);
+    }
+  } catch {
+    const el = modalEl === opened ? modalEl.querySelector("#map") : null;
+    if (el) el.innerHTML = `<p class="empty tiny">Could not load the route.</p>`;
+  }
+}
+
+// --- Events ------------------------------------------------------------------
+
+document.addEventListener("click", (event) => {
+  const target = event.target.closest("button");
+  if (!target) return;
+  if (target.matches("[data-close]")) { closeModal(); return; }
+  if (target.matches("[data-unit]")) {
+    unit = unit === "mi" ? "km" : "mi";
+    try { localStorage.setItem("safe-driving-unit", unit); } catch { /* storage blocked */ }
+    render();
+    return;
+  }
+  if (target.hasAttribute("data-week")) {
+    weekOffset = Math.min(4, Math.max(0, weekOffset + Number(target.getAttribute("data-week"))));
+    render();
+    return;
+  }
+  if (target.hasAttribute("data-mark")) {
+    target.disabled = true;
+    // In the trip's own window the reason field rides along; the quick
+    // Yes / No on the list has none.
+    const reason = modalEl?.contains(target) ? modalEl.querySelector("#mark-reason")?.value.trim() : undefined;
+    markTrip(target.getAttribute("data-mark"), target.getAttribute("data-status"), reason)
+      // A refusal leaves the button where it was, ready to be pressed again.
+      .then((marked) => { if (!marked) target.disabled = false; });
+    return;
+  }
+  if (target.hasAttribute("data-open")) { openTrip(target.getAttribute("data-open")); return; }
+});
+
+document.addEventListener("submit", (event) => {
+  if (event.target.id === "limit-form") {
+    event.preventDefault();
+    saveLimit(event.target);
+    return;
+  }
+  // Enter in the reason field must not pick a status: a browser would press
+  // the form's first button, and mark a "Jordan drove" trip as Driving.
+  if (event.target.id === "mark-form") event.preventDefault();
+});
+
+document.addEventListener("change", (event) => {
+  if (event.target.id !== "driver") return;
+  driverId = event.target.value;
+  weekOffset = 0;
+  render();
+});
+
+refresh();
+</script>
+</body>
+</html>

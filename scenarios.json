@@ -1,0 +1,254 @@
+{
+  "scenarios": [
+    {
+      "name": "A driver's speed limit is set by adults; the driver reads their own and nobody else's",
+      "members": {
+        "alex": "adult",
+        "casey": "child",
+        "riley": "child"
+      },
+      "steps": [
+        {
+          "action": "db",
+          "as": "alex",
+          "sql": "INSERT INTO app_safe_driving__driver_limits (id, member_id, limit_kph) VALUES (?, ?, ?)",
+          "params": [
+            "{{casey}}",
+            "{{casey}}",
+            105
+          ],
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "action": "db",
+          "as": "alex",
+          "sql": "INSERT INTO app_safe_driving__driver_limits (id, member_id, limit_kph) VALUES (?, ?, ?)",
+          "params": [
+            "{{riley}}",
+            "{{riley}}",
+            90
+          ],
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "action": "db",
+          "as": "alex",
+          "sql": "SELECT member_id, limit_kph FROM app_safe_driving__driver_limits",
+          "expect": {
+            "status": 200,
+            "rowCount": 2
+          }
+        },
+        {
+          "action": "db",
+          "as": "casey",
+          "sql": "SELECT member_id, limit_kph FROM app_safe_driving__driver_limits",
+          "expect": {
+            "status": 200,
+            "rowCount": 1,
+            "rowsContain": [
+              {
+                "limit_kph": 105
+              }
+            ]
+          }
+        },
+        {
+          "action": "db",
+          "as": "casey",
+          "sql": "UPDATE app_safe_driving__driver_limits SET limit_kph = 200 WHERE member_id = ?",
+          "params": [
+            "{{casey}}"
+          ],
+          "expect": {
+            "status": 403
+          }
+        },
+        {
+          "action": "db",
+          "as": "casey",
+          "sql": "DELETE FROM app_safe_driving__driver_limits WHERE member_id = ?",
+          "params": [
+            "{{casey}}"
+          ],
+          "expect": {
+            "status": 403
+          }
+        },
+        {
+          "action": "db",
+          "as": "casey",
+          "sql": "INSERT INTO app_safe_driving__driver_limits (id, member_id, limit_kph) VALUES (?, ?, ?)",
+          "params": [
+            "{{riley}}",
+            "{{riley}}",
+            200
+          ],
+          "expect": {
+            "status": 403
+          }
+        }
+      ]
+    },
+    {
+      "name": "An adult replaces a limit in one statement; the driver cannot use it to raise their own",
+      "members": {
+        "alex": "adult",
+        "casey": "child"
+      },
+      "steps": [
+        {
+          "action": "db",
+          "as": "alex",
+          "sql": "INSERT INTO app_safe_driving__driver_limits (id, member_id, limit_kph) VALUES (?, ?, ?) ON CONFLICT(member_id) DO UPDATE SET limit_kph = excluded.limit_kph",
+          "params": [
+            "{{casey}}",
+            "{{casey}}",
+            105
+          ],
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "action": "db",
+          "as": "alex",
+          "sql": "INSERT INTO app_safe_driving__driver_limits (id, member_id, limit_kph) VALUES (?, ?, ?) ON CONFLICT(member_id) DO UPDATE SET limit_kph = excluded.limit_kph",
+          "params": [
+            "{{casey}}",
+            "{{casey}}",
+            90
+          ],
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "action": "db",
+          "as": "casey",
+          "sql": "SELECT limit_kph FROM app_safe_driving__driver_limits",
+          "expect": {
+            "status": 200,
+            "rowCount": 1,
+            "rowsContain": [
+              {
+                "limit_kph": 90
+              }
+            ]
+          }
+        },
+        {
+          "action": "db",
+          "as": "casey",
+          "sql": "INSERT INTO app_safe_driving__driver_limits (id, member_id, limit_kph) VALUES (?, ?, ?) ON CONFLICT(member_id) DO UPDATE SET limit_kph = excluded.limit_kph",
+          "params": [
+            "{{casey}}",
+            "{{casey}}",
+            250
+          ],
+          "expect": {
+            "status": 403
+          }
+        },
+        {
+          "action": "db",
+          "as": "alex",
+          "sql": "SELECT limit_kph FROM app_safe_driving__driver_limits",
+          "expect": {
+            "status": 200,
+            "rowCount": 1,
+            "rowsContain": [
+              {
+                "limit_kph": 90
+              }
+            ]
+          }
+        },
+        {
+          "action": "db",
+          "as": "alex",
+          "sql": "INSERT INTO app_safe_driving__driver_limits (id, member_id, limit_kph) VALUES (?, ?, ?) ON CONFLICT(member_id) DO UPDATE SET limit_kph = excluded.limit_kph",
+          "params": [
+            "{{casey}}",
+            "{{casey}}",
+            900
+          ],
+          "expect": {
+            "status": 400
+          }
+        }
+      ]
+    },
+    {
+      "name": "In a shared space the steward sets limits; another adult sees none of them and changes none",
+      "context": "shared_space",
+      "members": {
+        "sam": "admin",
+        "pat": "adult",
+        "casey": "child"
+      },
+      "steps": [
+        {
+          "action": "db",
+          "as": "sam",
+          "sql": "INSERT INTO app_safe_driving__driver_limits (id, member_id, limit_kph) VALUES (?, ?, ?)",
+          "params": [
+            "{{casey}}",
+            "{{casey}}",
+            100
+          ],
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "action": "db",
+          "as": "pat",
+          "sql": "SELECT member_id FROM app_safe_driving__driver_limits",
+          "expect": {
+            "status": 200,
+            "rowCount": 0
+          }
+        },
+        {
+          "action": "db",
+          "as": "pat",
+          "sql": "UPDATE app_safe_driving__driver_limits SET limit_kph = 200 WHERE member_id = ?",
+          "params": [
+            "{{casey}}"
+          ],
+          "expect": {
+            "status": 200
+          }
+        },
+        {
+          "action": "db",
+          "as": "casey",
+          "sql": "SELECT limit_kph FROM app_safe_driving__driver_limits",
+          "expect": {
+            "status": 200,
+            "rowCount": 1
+          }
+        },
+        {
+          "action": "db",
+          "as": "sam",
+          "sql": "SELECT limit_kph FROM app_safe_driving__driver_limits",
+          "expect": {
+            "status": 200,
+            "rowCount": 1,
+            "rowsContain": [
+              {
+                "limit_kph": 100
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

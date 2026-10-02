@@ -1,0 +1,19 @@
+{
+  "name": "chickadeebandit-safe-driving",
+  "version": "1.0.0",
+  "description": "Safe Driving \u2014 drive reports from Chickadee Locate for Chickadee Bandit",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node dev.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "leaflet": "^1.9.4"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}
