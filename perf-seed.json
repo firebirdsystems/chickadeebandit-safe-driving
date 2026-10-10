@@ -1,0 +1,11 @@
+{
+ "seed": [
+  {
+   "sql": "INSERT INTO app_safe_driving__driver_limits (id, member_id, limit_kph) VALUES (?, ?, 105)",
+   "params": [
+    "{{me}}",
+    "{{me}}"
+   ]
+  }
+ ]
+}

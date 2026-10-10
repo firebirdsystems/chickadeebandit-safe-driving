@@ -26,6 +26,9 @@
     "ios_url": "https://apps.apple.com/app/chickadee-locate/id6794442354"
   },
   "storage": "db",
+  "preload": {
+    "driver_limits": {"sql": "SELECT member_id, limit_kph FROM app_safe_driving__driver_limits"}
+  },
   "data_access": {
     "reads": [
       "family.members",
