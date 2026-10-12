@@ -78,6 +78,8 @@
     .bar i { display: block; height: 10px; border-radius: 3px; background: var(--accent); min-width: 2px; }
     .bar.over i { background: var(--red); }
     .event { display: flex; justify-content: space-between; gap: 10px; font-size: .84rem; padding: 4px 0; border-bottom: 1px solid var(--border); }
+    .load-error { margin: 0 0 12px; padding: 10px 14px; border-radius: 10px; background: var(--hub-tint-danger, #fee2e2); color: var(--hub-tint-danger-fg, #b91c1c); font-size: 0.9rem; display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+    .load-error-retry { background: none; border: 1px solid currentColor; border-radius: 8px; padding: 5px 10px; font: inherit; font-weight: 600; color: inherit; cursor: pointer; flex-shrink: 0; }
   </style>
   <base href="/run/safe-driving/">
 </head>
@@ -118,6 +120,7 @@ let driverId = null;
 let weekOffset = 0;       // 0 = this week, 1 = last week, …
 let unit = "km";
 let error = "";
+let loadFailed = false;   // the drives could not be read: banner instead of the page
 let modalEl = null;
 let map = null;
 
@@ -143,8 +146,8 @@ async function db(sql, params = []) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sql, params }),
   });
-  const json = await res.json();
-  if (json.error) throw new Error(json.error);
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json || typeof json !== "object" || json.error) throw new Error(json?.error || "Couldn’t reach the hub. Try again.");
   return json;
 }
 
@@ -167,8 +170,10 @@ async function load() {
     // failure here costs the limits, not the drives.
     db("SELECT member_id, limit_kph FROM app_safe_driving__driver_limits").catch(() => null),
   ]);
-  if (!contextRes.ok) throw new Error("Could not load drives.");
-  const ctx = await contextRes.json();
+  const ctx = await contextRes.json().catch(() => null);
+  if (!contextRes.ok || !ctx || typeof ctx !== "object" || ctx.error) throw new Error("Could not load drives.");
+  // The hub answers 200 and names a key it could not resolve in $errors: that read failed too.
+  if (Array.isArray(ctx.$errors) && (ctx.$errors.includes("family.members") || ctx.$errors.includes("family.drives"))) throw new Error("Could not load drives.");
   members = ctx["family.members"] ?? [];
   trips = ctx["family.drives"] ?? [];
   // Absent from a hub that predates it: then nothing is said about recording.
@@ -183,8 +188,9 @@ async function refresh() {
   error = "";
   try {
     await load();
-  } catch (e) {
-    error = e.message;
+    loadFailed = false;
+  } catch {
+    loadFailed = true;
   }
   const drivers = driversFrom(trips, members, me?.id, limits.keys(), monitored.map((d) => d.memberId));
   if (!drivers.some((d) => d.id === driverId)) driverId = drivers[0]?.id ?? null;
@@ -353,7 +359,8 @@ function renderSummary(summary, monday) {
 function renderLimit() {
   // Not "no limit": unknown. Showing an empty field here would invite a save
   // that deletes the limit that could not be read.
-  if (limitsFailed) return `<p class="note">The speed limit could not be loaded, so time over the limit is not shown. Reload to try again.</p>`;
+  // The banner at the top of the page says so.
+  if (limitsFailed) return "";
   if (!canSetLimit(driverId, me, members)) {
     const kph = limits.get(driverId);
     return kph ? `<p class="muted tiny">Speed limit set for ${driverId === me?.id ? "you" : esc(memberName(driverId))}: ${esc(formatSpeed(kph, unit))}.</p>` : "";
@@ -386,9 +393,20 @@ function renderRecordingNotice() {
   return `<div class="note">No drives recorded in the last ${notice.days} days. If ${mine ? "you have" : `${esc(memberName(driverId))} has`} been driving, open Chickadee Locate on ${phone}.</div>`;
 }
 
+function loadErrorHtml(message) {
+  return `<div class="load-error" data-testid="load-error" role="alert"><span>${message}</span>
+    <button type="button" class="load-error-retry" data-testid="load-retry">Try again</button></div>`;
+}
+
 function render() {
   const root = document.getElementById("root");
   root.className = "";
+  if (loadFailed) {
+    root.innerHTML = `
+      <div class="topbar"><div><h1>Safe Driving</h1></div></div>
+      ${loadErrorHtml("Couldn’t load the drives.")}`;
+    return;
+  }
   const drivers = driversFrom(trips, members, me?.id, limits.keys(), monitored.map((d) => d.memberId));
   const own = trips.filter((trip) => trip.memberId === driverId);
   const limitKph = limits.get(driverId) ?? null;
@@ -412,6 +430,7 @@ function render() {
       </div>
     </div>
     ${error ? `<div class="error">${esc(error)}</div>` : ""}
+    ${limitsFailed ? loadErrorHtml("Couldn’t load the speed limits, so time over the limit is not shown.") : ""}
     ${partial ? `<div class="note">There are more drives than can be shown at once. Totals for older weeks may be incomplete.</div>` : ""}
     ${!driverId ? `
       <div class="card empty">
@@ -519,7 +538,10 @@ async function openTrip(tripId) {
   try {
     const key = `family.drives.trip:${trip.id}`;
     const res = await fetch(`${CONTEXT}?keys=${encodeURIComponent(key)}`);
-    const full = (await res.json())[key];
+    const json = await res.json().catch(() => null);
+    // A route that could not be read is not a route that is gone.
+    if (!res.ok || !json || typeof json !== "object" || json.error || (Array.isArray(json.$errors) && json.$errors.includes(key))) throw new Error("unread");
+    const full = json[key];
     // The viewer may have closed this trip, or opened another, meanwhile.
     if (modalEl !== opened) return;
     const el = modalEl.querySelector("#map");
@@ -555,6 +577,7 @@ document.addEventListener("click", (event) => {
   const target = event.target.closest("button");
   if (!target) return;
   if (target.matches("[data-close]")) { closeModal(); return; }
+  if (target.matches('[data-testid="load-retry"]')) { refresh(); return; }
   if (target.matches("[data-unit]")) {
     unit = unit === "mi" ? "km" : "mi";
     try { localStorage.setItem("safe-driving-unit", unit); } catch { /* storage blocked */ }
