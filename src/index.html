@@ -226,8 +226,11 @@ async function markTrip(tripId, status, reason) {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      // The hub decides who may mark a trip; say what it said.
-      await hubAlert(res.status === 404 ? "This trip is not yours to mark." : (json.error ?? "Could not mark this trip."));
+      // The hub decides who may mark a trip; say what it said when it refused.
+      // Anything else (an outage) is not a refusal and is not worded for anyone.
+      const refused = res.status >= 400 && res.status < 500;
+      if (!refused) console.error("[safe-driving] trip not marked", res.status, json?.error);
+      await hubAlert(res.status === 404 ? "This trip is not yours to mark." : ((refused && json.error) || "Couldn’t mark the trip — try again."));
       return false;
     }
     // Patch local state with what the hub stored — no reload of the list.
@@ -270,7 +273,8 @@ async function saveLimit(form) {
     }
     error = "";
   } catch (e) {
-    error = e.message;
+    console.error("[safe-driving] speed limit not saved", e);
+    error = "Couldn’t save the speed limit — try again.";
   }
   render();
 }
