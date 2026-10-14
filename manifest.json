@@ -57,8 +57,5 @@
   "nav": {
     "label": "Safe Driving"
   },
-  "resource_limits": {
-    "max_db_bytes": 5242880
-  },
   "kiosk": "never"
 }
